@@ -1,0 +1,36 @@
+name: Coyote tests
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  coyote:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '9.0.x'
+
+      - name: Restore dependencies and Coyote
+        run: make setup
+
+      - name: Run Coyote tests
+        run: make test
+
+      - name: Upload Coyote traces
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: coyote-traces
+          path: CoyoteTests/bin/Debug/net9.0/Output/
+          if-no-files-found: ignore
+          retention-days: 7

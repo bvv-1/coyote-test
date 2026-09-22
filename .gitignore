@@ -1,0 +1,33 @@
+# .NET build output
+[Bb]in/
+[Oo]bj/
+
+# Visual Studio / IDE files
+.vs/
+.vscode/
+*.user
+*.suo
+*.userprefs
+
+# Test and coverage output
+TestResults/
+coverage/
+*.coverage
+*.coveragexml
+*.opencover.xml
+*.trx
+
+# Coyote generated output
+CoyoteOutput/
+**/Output/
+*.dgml
+
+# NuGet and local tooling caches
+*.nupkg
+*.snupkg
+.nuget/
+
+# OS metadata
+.DS_Store
+Thumbs.db
+
