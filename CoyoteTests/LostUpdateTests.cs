@@ -9,23 +9,26 @@ public static class LostUpdateTests
     [Microsoft.Coyote.SystematicTesting.Test]
     public static async Task DetectLostUpdate()
     {
-        // 2つの並行処理が同一口座の残高を読み取って個別に増額を書き戻し、一方の更新が上書きされて失われるロストアップデートを検出する。
         using var database = new LiteDatabase(":memory:");
         var accounts = database.GetCollection<BsonDocument>("accounts");
         accounts.Insert(new BsonDocument { ["_id"] = 1, ["balance"] = 100 });
 
         void IncrementAccount()
         {
+            database.BeginTrans();
             SchedulingPoint.Interleave(); // Coyoteに探索させる
             var balance = accounts.FindById(1)["balance"].AsInt32;
             SchedulingPoint.Interleave(); // Coyoteに探索させる
             accounts.Update(new BsonDocument { ["_id"] = 1, ["balance"] = balance + 10 });
+            database.Commit();
         }
 
-        var firstIncrement = Task.Run(IncrementAccount);
-        var secondIncrement = Task.Run(IncrementAccount);
+        // 2つの並行処理が同一口座の残高を読み取って個別に増額を書き戻し、一方の更新が上書きされて失われるロストアップデートを検出する。
+        var firstIncrementTask = Task.Run(IncrementAccount);
+        var secondIncrementTask = Task.Run(IncrementAccount);
 
-        await Task.WhenAll(firstIncrement, secondIncrement);
+        await firstIncrementTask;
+        await secondIncrementTask;
         Specification.Assert(accounts.FindById(1)["balance"].AsInt32 == 120, "Lost Update");
     }
 
@@ -42,10 +45,10 @@ public static class LostUpdateTests
             accounts.UpdateMany("{ balance: balance + 10 }", "_id = 1");
         }
 
-        var firstIncrement = Task.Run(IncrementAccount);
-        var secondIncrement = Task.Run(IncrementAccount);
+        var firstIncrementTask = Task.Run(IncrementAccount);
+        var secondIncrementTask = Task.Run(IncrementAccount);
 
-        await Task.WhenAll(firstIncrement, secondIncrement);
+        await Task.WhenAll(firstIncrementTask, secondIncrementTask);
         Specification.Assert(accounts.FindById(1)["balance"].AsInt32 == 120, "Lost Update");
     }
 }

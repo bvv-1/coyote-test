@@ -9,7 +9,6 @@ public static class WriteSkewTests
     [Microsoft.Coyote.SystematicTesting.Test]
     public static async Task DetectWriteSkew()
     {
-        // 2つの処理がそれぞれ当直者数を確認し、2人以上なら退勤するため、当直者が0人になるライトスキューを検出する。
         using var database = new LiteDatabase(":memory:");
         var doctors = database.GetCollection<BsonDocument>("doctors");
         var doctorIds = new[] { 1, 2 };
@@ -18,6 +17,7 @@ public static class WriteSkewTests
             doctors.Insert(new BsonDocument { ["_id"] = doctorId, ["onDuty"] = true });
         }
 
+        // 2つの処理がそれぞれ当直者数を確認し、2人以上なら退勤するため、当直者が0人になる Write Skew を検出する。
         var leaveTasks = doctorIds
             .Select(id => Task.Run(() => TryLeaveDuty(id)))
             .ToArray();
@@ -47,7 +47,7 @@ public static class WriteSkewTests
             doctors.Insert(new BsonDocument { ["_id"] = doctorId, ["onDuty"] = true });
         }
 
-        // 検索述語「onDuty = true」を保護する述語ロックを、並行する処理間で共有する。
+        // 「onDuty = true」を保護する述語ロックを、並行する処理間で共有する。
         // ReaderWriterLockSlimでの待機をCoyoteに通知するアダプターを使用する。
         using var onDutyPredicateLock = new CoyoteReaderWriterLockAdapter();
         var leaveTasks = doctorIds
