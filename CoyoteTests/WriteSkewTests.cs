@@ -11,28 +11,28 @@ public static class WriteSkewTests
     {
         using var database = new LiteDatabase(":memory:");
         var doctors = database.GetCollection<BsonDocument>("doctors");
-        var doctorIds = new[] { 1, 2 };
-        foreach (var doctorId in doctorIds)
-        {
-            doctors.Insert(new BsonDocument { ["_id"] = doctorId, ["onDuty"] = true });
-        }
+        doctors.Insert(new BsonDocument { ["_id"] = 1, ["onDuty"] = true });
+        doctors.Insert(new BsonDocument { ["_id"] = 2, ["onDuty"] = true });
 
         // 2つの処理がそれぞれ当直者数を確認し、2人以上なら退勤するため、当直者が0人になる Write Skew を検出する。
-        var leaveTasks = doctorIds
-            .Select(id => Task.Run(() => TryLeaveDuty(id)))
-            .ToArray();
-        await Task.WhenAll(leaveTasks);
+        var firstLeaveTask = Task.Run(() => TryLeaveDuty(1));
+        var secondLeaveTask = Task.Run(() => TryLeaveDuty(2));
+        await Task.WhenAll(firstLeaveTask, secondLeaveTask);
 
         var onDutyDoctorCount = doctors.Count(Query.EQ("onDuty", true));
         Specification.Assert(onDutyDoctorCount >= 1, "Write Skew");
 
-        bool TryLeaveDuty(int doctorId)
+        void TryLeaveDuty(int doctorId)
         {
+            database.BeginTrans();
             SchedulingPoint.Interleave(); // Coyoteに実行順序の切り替えを探索させる
-            var onDutyCount = doctors.Count(Query.EQ("onDuty", true));
+            var currentlyOnCall = doctors.Count(Query.EQ("onDuty", true));
             SchedulingPoint.Interleave(); // Coyoteに実行順序の切り替えを探索させる
-            return onDutyCount >= 2 &&
+            if (currentlyOnCall >= 2)
+            {
                 doctors.Update(new BsonDocument { ["_id"] = doctorId, ["onDuty"] = false });
+            }
+            database.Commit();
         }
     }
 
@@ -41,45 +41,44 @@ public static class WriteSkewTests
     {
         using var database = new LiteDatabase(":memory:");
         var doctors = database.GetCollection<BsonDocument>("doctors");
-        var doctorIds = new[] { 1, 2 };
-        foreach (var doctorId in doctorIds)
-        {
-            doctors.Insert(new BsonDocument { ["_id"] = doctorId, ["onDuty"] = true });
-        }
+        doctors.Insert(new BsonDocument { ["_id"] = 1, ["onDuty"] = true });
+        doctors.Insert(new BsonDocument { ["_id"] = 2, ["onDuty"] = true });
 
         // 「onDuty = true」を保護する述語ロックを、並行する処理間で共有する。
         // ReaderWriterLockSlimでの待機をCoyoteに通知するアダプターを使用する。
         using var onDutyPredicateLock = new CoyoteReaderWriterLockAdapter();
-        var leaveTasks = doctorIds
-            .Select(id => Task.Run(() => TryLeaveDuty(id)))
-            .ToArray();
-        await Task.WhenAll(leaveTasks);
+        var firstLeaveTask = Task.Run(() => TryLeaveDuty(1));
+        var secondLeaveTask = Task.Run(() => TryLeaveDuty(2));
+        await Task.WhenAll(firstLeaveTask, secondLeaveTask);
 
         var onDutyDoctorCount = doctors.Count(Query.EQ("onDuty", true));
         Specification.Assert(onDutyDoctorCount >= 1, "Write Skew");
 
-        // ロックの取得と解放を同じスレッドで行うため、ロック保持中はawaitしない。
-        bool TryLeaveDuty(int doctorId)
+        // Two Phase Locking (2PL) を使用して、述語ロックを取得することで、Write Skew を防止する。
+        void TryLeaveDuty(int doctorId)
         {
             SchedulingPoint.Interleave(); // Coyoteに実行順序の切り替えを探索させる
             // アップグレード可能な読み取りロックを同時に1つに制限し、書き込みロックへの昇格時の相互待ちを防ぐ。
             onDutyPredicateLock.EnterUpgradeableReadLock();
             try
             {
-                var onDutyCount = doctors.Count(Query.EQ("onDuty", true));
+                database.BeginTrans();
+                var currentlyOnCall = doctors.Count(Query.EQ("onDuty", true));
                 SchedulingPoint.Interleave(); // Coyoteに実行順序の切り替えを探索させる
-                if (onDutyCount < 2) return false;
-
-                // 読み取りを保護したまま、書き込みロックへ昇格する。
-                onDutyPredicateLock.EnterWriteLock();
-                try
+                if (currentlyOnCall >= 2)
                 {
-                    return doctors.Update(new BsonDocument { ["_id"] = doctorId, ["onDuty"] = false });
+                    // 読み取りを保護したまま、書き込みロックへ昇格する。
+                    onDutyPredicateLock.EnterWriteLock();
+                    try
+                    {
+                        doctors.Update(new BsonDocument { ["_id"] = doctorId, ["onDuty"] = false });
+                    }
+                    finally
+                    {
+                        onDutyPredicateLock.ExitWriteLock();
+                    }
                 }
-                finally
-                {
-                    onDutyPredicateLock.ExitWriteLock();
-                }
+                database.Commit();
             }
             finally
             {
