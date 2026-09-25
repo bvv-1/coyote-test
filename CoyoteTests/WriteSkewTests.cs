@@ -17,7 +17,8 @@ public static class WriteSkewTests
         // 2つの処理がそれぞれ当直者数を確認し、2人以上なら退勤するため、当直者が0人になる Write Skew を検出する。
         var firstLeaveTask = Task.Run(() => TryLeaveDuty(1));
         var secondLeaveTask = Task.Run(() => TryLeaveDuty(2));
-        await Task.WhenAll(firstLeaveTask, secondLeaveTask);
+        await firstLeaveTask;
+        await secondLeaveTask;
 
         var onDutyDoctorCount = doctors.Count(Query.EQ("onDuty", true));
         Specification.Assert(onDutyDoctorCount >= 1, "Write Skew");
@@ -49,7 +50,8 @@ public static class WriteSkewTests
         using var onDutyPredicateLock = new CoyoteReaderWriterLockAdapter();
         var firstLeaveTask = Task.Run(() => TryLeaveDuty(1));
         var secondLeaveTask = Task.Run(() => TryLeaveDuty(2));
-        await Task.WhenAll(firstLeaveTask, secondLeaveTask);
+        await firstLeaveTask;
+        await secondLeaveTask;
 
         var onDutyDoctorCount = doctors.Count(Query.EQ("onDuty", true));
         Specification.Assert(onDutyDoctorCount >= 1, "Write Skew");
